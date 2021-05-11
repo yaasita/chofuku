@@ -16,10 +16,16 @@ func TestCompareHash(t *testing.T) {
 }
 func TestNew(t *testing.T) {
 	target_dir := os.Getenv("TARGET_DIR")
-	c, _ := New(target_dir)
+	c, err := New(target_dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	c.UpdateHead100k()
-	duplicates, _ := c.GetDuplicates()
+	duplicates, err := c.GetDuplicates()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, v := range duplicates {
-		t.Logf("size = %d", v.Size)
+		t.Logf("size = %d, 100k = %s \n%+v", v.Size, v.Head100kHash, v.Names)
 	}
 }

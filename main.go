@@ -5,18 +5,25 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/yaasita/chofuku/chofuku"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 func main() {
 	size_only := flag.Bool("size-only", false, "check size only")
 	head100k_only := flag.Bool("100k-only", false, "check only the first 100 kbytes")
-	show_version := flag.Bool("version", false, "show version") 
+	show_version := flag.Bool("version", false, "show version")
 	flag.Parse()
 	target_dir := flag.Arg(0)
+	if target_dir == "" {
+		fmt.Println(os.Args[0], "[options] /path/to/directory")
+		fmt.Println("options:")
+		flag.PrintDefaults()
+		return
+	}
 	if *show_version {
 		fmt.Println(version)
 		return

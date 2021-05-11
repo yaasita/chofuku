@@ -3,6 +3,7 @@ package chofuku
 import (
 	"crypto/md5"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	_ "github.com/mattn/go-sqlite3"
@@ -22,21 +23,20 @@ type Duplicate struct {
 }
 
 func New(dir string) (Chofuku, error) {
-	os.Remove("/tmp/duplicate.db")
-	db, err := sql.Open("sqlite3", "/tmp/duplicate.db")
-	//db, err := sql.Open("sqlite3", "file:duplicate.db?cache=shared&mode=memory")
+	//os.Remove("/tmp/chofuku.db")
+	//db, err := sql.Open("sqlite3", "/tmp/chofuku.db")
+	db, err := sql.Open("sqlite3", "file:chofuku.db?cache=shared&mode=memory")
 	if err != nil {
 		return Chofuku{}, err
 	}
 	chofuku := Chofuku{db}
 	_, err = db.Exec(`
-		CREATE TABLE duplicate (
+		CREATE TABLE files (
 			name TEXT NOT NULL PRIMARY KEY, 
 			size INTEGER NOT NULL,
 			head100k_hash TEXT DEFAULT "",
 			full_hash TEXT DEFAULT ""
 		);
-		CREATE INDEX size ON duplicate (size);
 	`)
 	if err != nil {
 		return chofuku, err
@@ -44,7 +44,7 @@ func New(dir string) (Chofuku, error) {
 	err = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
 		IsSymLink := (os.ModeSymlink & info.Mode()) != 0
 		if !info.IsDir() && !IsSymLink {
-			_, err = db.Exec(`INSERT INTO duplicate (name, size) 
+			_, err = db.Exec(`INSERT INTO files (name, size) 
 							VALUES (?, ?);`, p, info.Size())
 			if err != nil {
 				return err
@@ -62,18 +62,23 @@ func (c *Chofuku) Close() {
 }
 func (c *Chofuku) GetDuplicates() ([]Duplicate, error) {
 	duplicates := []Duplicate{}
-	rows, err := c.DB.Query(`SELECT size, head100k_hash, full_hash FROM duplicate GROUP BY size, head100k_hash, full_hash HAVING count(*) > 1;`)
+	rows, err := c.DB.Query(`SELECT size, head100k_hash, full_hash, json_group_array(name)
+		FROM files GROUP BY size, head100k_hash, full_hash HAVING count(*) > 1;
+	`)
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "group by select error")
 		return duplicates, err
 	}
 	for rows.Next() {
 		var size int64
-		var head100k_hash, full_hash string
-		if err = rows.Scan(&size, &head100k_hash, &full_hash); err != nil {
+		var head100k_hash, full_hash, json_group_array string
+		if err = rows.Scan(&size, &head100k_hash, &full_hash, &json_group_array); err != nil {
 			return duplicates, err
 		}
-		names, err := c.getNames(size, head100k_hash, full_hash)
+		var names []string
+		err = json.Unmarshal([]byte(json_group_array), &names)
 		if err != nil {
+			fmt.Fprintln(os.Stderr, "json parse error")
 			return duplicates, err
 		}
 		duplicates = append(duplicates,
@@ -84,24 +89,6 @@ func (c *Chofuku) GetDuplicates() ([]Duplicate, error) {
 			})
 	}
 	return duplicates, nil
-}
-func (c *Chofuku) getNames(size int64, head100k_hash, full_hash string) ([]string, error) {
-	var names []string
-	rows, err := c.DB.Query(`SELECT name FROM duplicate 
-		WHERE size = ? AND head100k_hash = ? AND full_hash = ?;`,
-		size, head100k_hash, full_hash,
-	)
-	if err != nil {
-		return names, err
-	}
-	for rows.Next() {
-		var name string
-		if err = rows.Scan(&name); err != nil {
-			return names, err
-		}
-		names = append(names, name)
-	}
-	return names, nil
 }
 func (c *Chofuku) UpdateHead100k() error {
 	duplicates, err := c.GetDuplicates()
@@ -151,7 +138,7 @@ func (c *Chofuku) updateColumn(name, column, hash string) error {
 	if column != "head100k_hash" && column != "full_hash" {
 		return errors.New("invalid column name")
 	}
-	_, err := c.DB.Exec(`UPDATE duplicate SET `+column+` = ? 
+	_, err := c.DB.Exec(`UPDATE files SET `+column+` = ? 
 		WHERE name = ?`, hash, name)
 	if err != nil {
 		return err
